@@ -107,3 +107,67 @@ Excel文件包含3个sheet：
 
 输出CSV格式：
 - `用户ID, family_circle_id, is_key_person`
+
+## Git 工作流规范
+
+### 分支管理规则
+
+1. **master 分支保护**
+   - 禁止直接在 master 分支上修改代码
+   - 禁止在 master 分支上提交代码
+   - 禁止将本地分支合并到本地 master 分支
+
+2. **分支命名规范**
+   - 所有新分支必须以 `openclaw/` 开头
+   - 示例：`openclaw/feature-A`、`openclaw/bugfix-login`
+
+3. **PR 合并规则**
+   - 禁止自行审批通过 PR
+   - PR 必须由人工审核后才能合并
+   - 可以在确认开发完成后自行创建并提交 PR
+
+### 提交规范
+
+**提交格式：**
+```
+[Tag] 标题
+
+详细描述（可选）
+```
+
+**Tag 类型：**
+| Tag | 说明 | 示例 |
+|-----|------|------|
+| Feature | 新功能 | [Feature] Add user login |
+| Bugfix | Bug修复 | [Bugfix] Fix login error |
+| Doc | 文档更新 | [Doc] Update README |
+| Model | 模型相关 | [Model] Add new feature |
+| Refactor | 代码重构 | [Refactor] Optimize data loader |
+| Style | 代码格式 | [Style] Format code |
+| Test | 测试相关 | [Test] Add unit tests |
+| Config | 配置变更 | [Config] Update requirements |
+
+**示例：**
+```
+[Feature] Add user authentication
+
+Implement OAuth2 login with Google and GitHub providers.
+Include token refresh and session management.
+```
+
+### 开发流程
+
+```bash
+# 1. 创建新分支
+git checkout -b openclaw/feature-xxx
+
+# 2. 开发并提交
+git add .
+git commit -m "[Feature] Add new feature"
+
+# 3. 推送到远程
+git push -u origin openclaw/feature-xxx
+
+# 4. 在 GitHub 上创建 PR
+# 等待人工审核后合并
+```
