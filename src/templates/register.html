@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>注册 - 家智圈</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
@@ -15,49 +16,106 @@
         input:focus { outline: none; border-color: #4a90e2; }
         button { width: 100%; padding: 12px; background: #4a90e2; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; }
         button:hover { background: #357abd; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
         .links { text-align: center; margin-top: 20px; }
         .links a { color: #4a90e2; text-decoration: none; }
-        .flash-messages { margin-bottom: 20px; }
-        .flash { padding: 12px; border-radius: 6px; margin-bottom: 10px; }
-        .flash.error { background: #fee; color: #c33; }
-        .flash.success { background: #efe; color: #3c3; }
-        .flash.info { background: #eef; color: #33c; }
+        .alert { padding: 12px; border-radius: 6px; margin-bottom: 20px; }
+        .alert.error { background: #fee; color: #c33; }
+        .alert.success { background: #efe; color: #3c3; }
     </style>
 </head>
 <body>
-    <div class="register-container">
-        <h1>注册账号</h1>
-        
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        <div class="flash-messages">
-            {% for category, message in messages %}
-            <div class="flash {{ category }}">{{ message }}</div>
-            {% endfor %}
-        </div>
-        {% endif %}
-        {% endwith %}
-        
-        <form method="POST">
-            <div class="form-group">
-                <label for="username">用户名</label>
-                <input type="text" id="username" name="username" required autofocus>
+    <div id="app">
+        <div class="register-container">
+            <h1>注册账号</h1>
+            
+            <div v-if="message" :class="['alert', message.type]" v-text="message.text"></div>
+            
+            <form @submit.prevent="handleRegister">
+                <div class="form-group">
+                    <label for="username">用户名</label>
+                    <input type="text" id="username" v-model="form.username" required autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" v-model="form.password" required minlength="6">
+                </div>
+                <div class="form-group">
+                    <label for="password_confirm">确认密码</label>
+                    <input type="password" id="password_confirm" v-model="form.password_confirm" required>
+                </div>
+                <button type="submit" :disabled="loading" v-text="loading ? '注册中...' : '注册'"></button>
+            </form>
+            
+            <div class="links">
+                <p>已有账号？ <a href="/auth/login">立即登录</a></p>
+                <p><a href="/">返回首页</a></p>
             </div>
-            <div class="form-group">
-                <label for="password">密码</label>
-                <input type="password" id="password" name="password" required minlength="6">
-            </div>
-            <div class="form-group">
-                <label for="password_confirm">确认密码</label>
-                <input type="password" id="password_confirm" name="password_confirm" required>
-            </div>
-            <button type="submit">注册</button>
-        </form>
-        
-        <div class="links">
-            <p>已有账号？ <a href="{{ url_for('auth.login') }}">立即登录</a></p>
-            <p><a href="{{ url_for('index') }}">返回首页</a></p>
         </div>
     </div>
+
+    <script>
+        const { createApp, ref, reactive } = Vue;
+        
+        createApp({
+            setup() {
+                const form = reactive({
+                    username: '',
+                    password: '',
+                    password_confirm: ''
+                });
+                const loading = ref(false);
+                const message = ref(null);
+                
+                const handleRegister = async () => {
+                    if (form.password !== form.password_confirm) {
+                        message.value = { type: 'error', text: '两次密码不一致' };
+                        return;
+                    }
+                    
+                    if (form.password.length < 6) {
+                        message.value = { type: 'error', text: '密码长度至少6位' };
+                        return;
+                    }
+                    
+                    loading.value = true;
+                    message.value = null;
+                    
+                    try {
+                        const formData = new FormData();
+                        formData.append('username', form.username);
+                        formData.append('password', form.password);
+                        formData.append('password_confirm', form.password_confirm);
+                        
+                        const response = await fetch('/auth/register', {
+                            method: 'POST',
+                            body: formData,
+                            credentials: 'same-origin'
+                        });
+                        
+                        if (response.ok && response.redirected) {
+                            message.value = { type: 'success', text: '注册成功，正在跳转...' };
+                            setTimeout(() => {
+                                window.location.href = '/auth/login';
+                            }, 1500);
+                        } else {
+                            message.value = { type: 'error', text: '注册失败，请重试' };
+                        }
+                    } catch (error) {
+                        message.value = { type: 'error', text: '注册失败，请重试' };
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+                
+                return {
+                    form,
+                    loading,
+                    message,
+                    handleRegister
+                };
+            }
+        }).mount('#app');
+    </script>
 </body>
 </html>
