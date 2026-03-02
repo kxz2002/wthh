@@ -23,6 +23,10 @@ src/output/*.csv
 src/output/*.json
 !src/output/.gitkeep
 
+# Database
+instance/
+*.db
+
 # OS
 .DS_Store
 Thumbs.db
