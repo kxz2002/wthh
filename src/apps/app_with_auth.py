@@ -52,23 +52,135 @@ train_df = None
 valid_df = None
 test_df = None
 
+
+def build_circle_graph(result_df, df, circle_id):
+    """
+    构建家庭圈知识图谱数据的核心函数
+    """
+    # 查找用户ID列
+    user_id_col = None
+    possible_names = ['用户ID', 'user_id', '用户id', 'ID', 'id', '用户编号']
+    for col in result_df.columns:
+        if any(name in str(col).lower() for name in possible_names):
+            user_id_col = col
+            break
+    if user_id_col is None:
+        user_id_col = result_df.columns[0]
+    
+    # 获取该家庭圈的所有成员
+    circle_members = result_df[result_df['family_circle_id'] == int(circle_id)]
+    
+    if len(circle_members) == 0:
+        return {'nodes': [], 'edges': [], 'error': '家庭圈不存在'}
+    
+    # 构建节点（用户）
+    nodes = []
+    edges = []
+    
+    for idx, row in circle_members.iterrows():
+        user_id = str(row[user_id_col])
+        is_key = bool(row['is_key_person'])
+        
+        nodes.append({
+            'id': user_id,
+            'label': user_id + (' 👑' if is_key else ''),
+            'group': 'key_person' if is_key else 'member',
+            'title': f'用户: {user_id}\n{"关键人" if is_key else "成员"}'
+        })
+    
+    # 构建边（基于地址、账户等关联）
+    user_ids = set(circle_members[user_id_col].astype(str).tolist())
+    circle_df = df[df[user_id_col].astype(str).isin(user_ids)]
+    
+    # 基于地址关联
+    addr_cols = [col for col in df.columns 
+                if any(kw in str(col).lower() for kw in ['地址', 'address', '基站', 'station', '小区', '区域'])]
+    for addr_col in addr_cols:
+        if addr_col in circle_df.columns:
+            for addr, group in circle_df.groupby(addr_col):
+                if pd.notna(addr) and str(addr).strip():
+                    group_users = group[user_id_col].astype(str).unique().tolist()
+                    group_users = [u for u in group_users if u in user_ids]
+                    if len(group_users) > 1:
+                        for i, u1 in enumerate(group_users):
+                            for u2 in group_users[i+1:]:
+                                edges.append({
+                                    'from': u1,
+                                    'to': u2,
+                                    'label': f'同{addr_col}',
+                                    'color': {'color': '#97C2FC'}
+                                })
+    
+    # 基于账户关联
+    account_cols = [col for col in df.columns 
+                   if any(kw in str(col).lower() for kw in ['账户', 'account', '缴费', 'payment'])]
+    for account_col in account_cols:
+        if account_col in circle_df.columns:
+            for account, group in circle_df.groupby(account_col):
+                if pd.notna(account) and str(account).strip():
+                    group_users = group[user_id_col].astype(str).unique().tolist()
+                    group_users = [u for u in group_users if u in user_ids]
+                    if len(group_users) > 1:
+                        for i, u1 in enumerate(group_users):
+                            for u2 in group_users[i+1:]:
+                                edges.append({
+                                    'from': u1,
+                                    'to': u2,
+                                    'label': f'同{account_col}',
+                                    'color': {'color': '#FFB84D'}
+                                })
+    
+    # 基于家庭网关联
+    family_cols = [col for col in df.columns 
+                  if any(kw in str(col).lower() for kw in ['家庭网', '泛家庭', '物理家'])]
+    for family_col in family_cols:
+        if family_col in circle_df.columns:
+            for family, group in circle_df.groupby(family_col):
+                if pd.notna(family) and str(family).strip():
+                    group_users = group[user_id_col].astype(str).unique().tolist()
+                    group_users = [u for u in group_users if u in user_ids]
+                    if len(group_users) > 1:
+                        for i, u1 in enumerate(group_users):
+                            for u2 in group_users[i+1:]:
+                                edges.append({
+                                    'from': u1,
+                                    'to': u2,
+                                    'label': f'同{family_col}',
+                                    'color': {'color': '#7B68EE'}
+                                })
+    
+    # 去重边
+    seen_edges = set()
+    unique_edges = []
+    for edge in edges:
+        edge_key = tuple(sorted([edge['from'], edge['to']]))
+        if edge_key not in seen_edges:
+            seen_edges.add(edge_key)
+            unique_edges.append(edge)
+    
+    return {'nodes': nodes, 'edges': unique_edges}
+
+
 def load_model_and_data():
-    """加载数据和模型"""
+    """加载模型和数据"""
     global model, train_result, valid_result, test_result, train_df, valid_df, test_df
     
+    output_dir = os.path.join(base_dir, 'src', 'output')
+    
+    # 尝试加载已保存的结果
+    if os.path.exists(os.path.join(output_dir, 'train_result.csv')):
+        train_result = pd.read_csv(os.path.join(output_dir, 'train_result.csv'))
+        valid_result = pd.read_csv(os.path.join(output_dir, 'valid_result.csv'))
+        test_result = pd.read_csv(os.path.join(output_dir, 'test_result.csv'))
+        print("已加载保存的结果")
+    
+    # 加载原始数据
     data_path = os.path.join(base_dir, 'src', 'data', 'AI+数据1：数据应用开发-家庭圈用户识别模型.xlsx')
     loader = DataLoader(data_path)
     train_df, valid_df, test_df = loader.load_data()
-    
-    feature_engineer = FeatureEngineer()
-    train_features = feature_engineer.create_features(train_df)
-    valid_features = feature_engineer.create_features(valid_df)
-    test_features = feature_engineer.create_features(test_df)
-    
-    model = FamilyCircleModel()
-    train_result = model.predict(train_features)
-    valid_result = model.predict(valid_features)
-    test_result = model.predict(test_features)
+    train_df = loader.flatten_columns(train_df)
+    valid_df = loader.flatten_columns(valid_df)
+    test_df = loader.flatten_columns(test_df)
 
 # 首页 - 重定向到 Vue 前端
 @app.route('/')
@@ -87,7 +199,7 @@ def dashboard():
 # API 路由...
 @app.route('/api/statistics')
 def get_statistics():
-    if not train_result or not valid_result or not test_result:
+    if train_result is None or valid_result is None or test_result is None:
         load_model_and_data()
     return jsonify({
         'train': {'total_users': len(train_result)},
@@ -97,7 +209,7 @@ def get_statistics():
 
 @app.route('/api/family_circles')
 def get_family_circles():
-    if not train_result:
+    if train_result is None:
         load_model_and_data()
     page = int(request.args.get('page', 1))
     per_page = int(request.args.get('per_page', 20))
@@ -182,91 +294,13 @@ def get_circle_graph(circle_id):
         result = test_result
         df = test_df
 
-    # 查找用户ID列
-    user_id_col = None
-    possible_names = ['用户ID', 'user_id', '用户id', 'ID', 'id', '用户编号']
-    for col in result.columns:
-        if any(name in str(col).lower() for name in possible_names):
-            user_id_col = col
-            break
-    if user_id_col is None:
-        user_id_col = result.columns[0]
-
-    # 获取该家庭圈的所有成员
-    circle_members = result[result['family_circle_id'] == int(circle_id)]
-
-    if len(circle_members) == 0:
-        return jsonify({'error': '家庭圈不存在'}), 404
-
-    # 构建节点（用户）
-    nodes = []
-    edges = []
-
-    for idx, row in circle_members.iterrows():
-        user_id = str(row[user_id_col])
-        is_key = bool(row['is_key_person'])
-
-        nodes.append({
-            'id': user_id,
-            'label': user_id + (' (关键人)' if is_key else ''),
-            'group': 'key_person' if is_key else 'member',
-            'title': f'用户: {user_id}\n{"关键人" if is_key else "成员"}'
-        })
-
-    # 构建边（基于地址、账户等关联）
-    user_ids = circle_members[user_id_col].astype(str).tolist()
-
-    # 基于地址关联
-    addr_cols = [col for col in df.columns
-                if any(kw in str(col).lower() for kw in ['地址', 'address', '基站', 'station'])]
-    for addr_col in addr_cols[:2]:
-        if addr_col in df.columns:
-            for addr, group in df.groupby(addr_col):
-                if pd.notna(addr):
-                    group_users = group[user_id_col].astype(str).tolist()
-                    group_users = [u for u in group_users if u in user_ids]
-                    if len(group_users) > 1:
-                        for i, u1 in enumerate(group_users):
-                            for u2 in group_users[i+1:]:
-                                edges.append({
-                                    'from': u1,
-                                    'to': u2,
-                                    'label': '地址关联',
-                                    'color': {'color': '#97C2FC'}
-                                })
-
-    # 基于账户关联
-    account_cols = [col for col in df.columns
-                   if any(kw in str(col).lower() for kw in ['账户', 'account', '缴费', 'payment'])]
-    for account_col in account_cols[:2]:
-        if account_col in df.columns:
-            for account, group in df.groupby(account_col):
-                if pd.notna(account):
-                    group_users = group[user_id_col].astype(str).tolist()
-                    group_users = [u for u in group_users if u in user_ids]
-                    if len(group_users) > 1:
-                        for i, u1 in enumerate(group_users):
-                            for u2 in group_users[i+1:]:
-                                edges.append({
-                                    'from': u1,
-                                    'to': u2,
-                                    'label': '账户关联',
-                                    'color': {'color': '#FFB84D'}
-                                })
-
-    # 去重边
-    seen_edges = set()
-    unique_edges = []
-    for edge in edges:
-        edge_key = tuple(sorted([edge['from'], edge['to']]))
-        if edge_key not in seen_edges:
-            seen_edges.add(edge_key)
-            unique_edges.append(edge)
-
-    return jsonify({
-        'nodes': nodes,
-        'edges': unique_edges
-    })
+    # 使用build_circle_graph函数构建图谱
+    graph_data = build_circle_graph(result, df, circle_id)
+    
+    if 'error' in graph_data:
+        return jsonify({'error': graph_data['error']}), 404
+    
+    return jsonify(graph_data)
 
 if __name__ == '__main__':
     with app.app_context():
