@@ -103,9 +103,39 @@
             @keyup.enter="loadGraph"
           />
           <button @click="loadGraph">加载图谱</button>
+          <label class="toggle-label">
+            <input type="checkbox" v-model="hideNodeLabels" @change="handleToggleLabels" />
+            隐藏节点ID
+          </label>
         </div>
         <div v-if="graphError" class="error-message">{{ graphError }}</div>
-        <div ref="graphContainer" class="graph-container"></div>
+
+        <!-- 节点图例 -->
+        <div class="graph-legend">
+          <span class="legend-item"><span class="legend-circle" style="background: #FFD700;"></span> 关键人</span>
+          <span class="legend-item"><span class="legend-circle" style="background: #97C2FC;"></span> 成员</span>
+        </div>
+
+        <!-- 画布区域 -->
+        <div class="graph-wrapper">
+          <!-- 连线图例和筛选 - 在画布外面但相对于wrapper定位 -->
+          <div class="edge-legend">
+            <div class="edge-legend-title">关系筛选</div>
+            <label class="edge-legend-item">
+              <input type="checkbox" v-model="edgeFilters.地址关联" @change="handleFilterEdges" />
+              <span class="edge-line" style="background: #97C2FC;"></span> 地址关联
+            </label>
+            <label class="edge-legend-item">
+              <input type="checkbox" v-model="edgeFilters.账户关联" @change="handleFilterEdges" />
+              <span class="edge-line" style="background: #FFB84D;"></span> 账户关联
+            </label>
+            <label class="edge-legend-item">
+              <input type="checkbox" v-model="edgeFilters.家庭网关联" @change="handleFilterEdges" />
+              <span class="edge-line" style="background: #7B68EE;"></span> 家庭网关联
+            </label>
+          </div>
+          <div ref="graphContainer" class="graph-container"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -133,6 +163,18 @@ const graphContainer = ref(null)
 const graphDataset = ref('train')
 const graphCircleId = ref('')
 const graphError = ref('')
+const hideNodeLabels = ref(false)
+
+// 边筛选器
+const edgeFilters = ref({
+  '地址关联': true,
+  '账户关联': true,
+  '家庭网关联': true
+})
+
+// 存储原始边数据
+let originalEdges = []
+let originalNodes = []
 let network = null
 const nodes = new DataSet([])
 const edges = new DataSet([])
@@ -190,33 +232,57 @@ const loadGraph = async () => {
   }
 
   graphError.value = ''
+  console.log('Loading graph for circle:', graphCircleId.value, 'dataset:', graphDataset.value)
 
   try {
     const response = await dataAPI.getCircleGraph(graphCircleId.value, graphDataset.value)
     const { nodes: graphNodes, edges: graphEdges } = response.data
+    console.log('Graph data received:', graphNodes.length, 'nodes,', graphEdges.length, 'edges')
 
     // Clear existing data
     nodes.clear()
     edges.clear()
 
-    // Add new data
-    nodes.add(graphNodes.map(node => ({
+    // 保存原始节点数据
+    originalNodes = graphNodes.map(node => ({
       id: node.id,
       label: node.label,
+      originalLabel: node.label,
       group: node.group,
       title: node.title
-    })))
+    }))
 
-    edges.add(graphEdges.map(edge => ({
+    // Add nodes
+    nodes.add(originalNodes)
+
+    // 保存原始边数据用于筛选
+    originalEdges = graphEdges.map(edge => ({
       from: edge.from,
       to: edge.to,
       label: edge.label,
       color: edge.color
+    }))
+
+    edges.add(originalEdges.map(edge => ({
+      from: edge.from,
+      to: edge.to,
+      label: false,  // 隐藏连线文字
+      color: edge.color
     })))
+
+    // 重置筛选器
+    edgeFilters.value = {
+      '地址关联': true,
+      '账户关联': true,
+      '家庭网关联': true
+    }
+
+    console.log('Data prepared, container:', graphContainer.value)
 
     // Create network
     await nextTick()
     if (graphContainer.value) {
+      console.log('Creating network...')
       if (network) {
         network.destroy()
       }
@@ -225,18 +291,20 @@ const loadGraph = async () => {
         nodes: {
           shape: 'dot',
           size: 16,
-          font: { size: 14 },
+          font: { size: 12, color: '#333', strokeWidth: 0 },
           borderWidth: 2,
           color: {
             background: '#97C2FC',
             border: '#2B7CDE',
-            highlight: { background: '#FFB84D', border: '#FF9800' }
+            highlight: { background: '#FFB84D', border: '#FF9800' },
+            hover: { background: '#FFB84D', border: '#FF9800' }
           }
         },
         edges: {
-          width: 2,
-          color: { inherit: 'from' },
-          arrows: { to: { enabled: true } }
+          width: 1.5,
+          color: { color: '#97C2FC', opacity: 0.6 },
+          arrows: { to: { enabled: false } },
+          smooth: { type: 'continuous' }
         },
         groups: {
           key_person: {
@@ -248,24 +316,94 @@ const loadGraph = async () => {
           }
         },
         physics: {
+          enabled: true,
           stabilization: false,
           barnesHut: {
-            gravitationalConstant: -8000,
+            gravitationalConstant: -5000,
             springConstant: 0.04,
-            springLength: 95
+            springLength: 150,
+            centralGravity: 0.3
           }
         },
         interaction: {
           hover: true,
-          tooltipDelay: 200
+          tooltipDelay: 200,
+          zoomView: true,
+          dragView: true
         }
       }
 
       network = new Network(graphContainer.value, { nodes, edges }, options)
+      console.log('Network created successfully!')
+    } else {
+      console.log('graphContainer is null!')
     }
   } catch (err) {
-    graphError.value = err.response?.data?.error || '加载图谱失败'
+    console.error('Network creation error:', err)
+    graphError.value = '图谱初始化失败: ' + err.message
   }
+}
+
+const handleToggleLabels = () => {
+  if (!network) return
+
+  // 获取所有节点ID并更新标签
+  const allNodes = nodes.get()
+  const updates = allNodes.map(node => ({
+    id: node.id,
+    label: hideNodeLabels.value ? '' : node.originalLabel || node.label
+  }))
+
+  nodes.update(updates)
+}
+
+const handleFilterEdges = () => {
+  if (!network || originalEdges.length === 0) return
+
+  // 根据筛选条件过滤边
+  const filteredEdges = originalEdges.filter(edge => {
+    const label = edge.label || ''
+    // 判断边的类型
+    if (label.includes('地址') || label.includes('小区') || label.includes('区域') || label.includes('基站')) {
+      return edgeFilters.value['地址关联'] === true
+    } else if (label.includes('账户') || label.includes('缴费')) {
+      return edgeFilters.value['账户关联'] === true
+    } else if (label.includes('家庭网') || label.includes('泛家庭')) {
+      return edgeFilters.value['家庭网关联'] === true
+    }
+    return true
+  })
+
+  // 获取过滤后的边连接的节点ID
+  const connectedNodeIds = new Set()
+  filteredEdges.forEach(edge => {
+    connectedNodeIds.add(edge.from)
+    connectedNodeIds.add(edge.to)
+  })
+
+  // 更新边数据（隐藏标签）
+  const edgesWithHiddenLabel = filteredEdges.map(edge => ({
+    ...edge,
+    label: false
+  }))
+
+  edges.clear()
+  edges.add(edgesWithHiddenLabel)
+
+  // 处理节点：保留所有节点，但为孤立节点设置固定位置防止消失
+  const nodesToUpdate = originalNodes.map(node => {
+    if (!connectedNodeIds.has(node.id)) {
+      // 孤立节点保持原位置，设置固定不移动
+      return { ...node, physics: false }
+    }
+    return { ...node, physics: true }
+  })
+
+  nodes.clear()
+  nodes.add(nodesToUpdate)
+
+  // 重新创建网络（使用新的节点数据）
+  network.setData({ nodes, edges })
 }
 
 const viewCircleGraph = (circleId) => {
@@ -517,6 +655,11 @@ th {
   cursor: pointer;
 }
 
+.graph-wrapper {
+  position: relative;
+  width: 100%;
+}
+
 .graph-container {
   width: 100%;
   height: 600px;
@@ -530,4 +673,86 @@ th {
   font-size: 0.875rem;
   margin-bottom: 1rem;
 }
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 15px;
+  cursor: pointer;
+}
+
+.graph-legend {
+  display: flex;
+  gap: 20px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: #f5f5f5;
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+}
+.legend-color {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid #333;
+}
+
+.legend-circle {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #333;
+}
+
+/* 边图例 - 右上角定位 */
+.edge-legend {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 12px;
+  z-index: 9999;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  pointer-events: auto;
+}
+
+.edge-legend-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.edge-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #555;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.edge-legend-item input {
+  cursor: pointer;
+}
+
+.edge-line {
+  display: inline-block;
+  width: 24px;
+  height: 3px;
+  border-radius: 2px;
+}
+
 </style>
